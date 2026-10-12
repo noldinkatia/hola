@@ -21,14 +21,10 @@ import { ubicacionValida } from './ubicaciones.js';
 
 export { processDueFollowups } from './followups.js';
 
-// Router de /api: define los permisos comunes y las rutas de casos del ciudadano,
-// y monta los routers de pistas, notificaciones, estadísticas y administración.
 export function createCaseRouter({ db, jwtSecret }) {
   const router = express.Router();
   const requireUser = authenticate(jwtSecret, db);
   const requireAdmin = [requireUser, requireAdministrator];
-  // La cuenta de administrador es institucional: no reporta ni sigue casos
-  // propios (ROLES_Y_PERMISOS.txt, tabla de permisos).
   const requireCitizen = [requireUser, (req, res, next) => {
     if (isAdministrator(req.auth)) {
       return res.status(403).json({ error: 'La cuenta de administrador no reporta ni sigue casos propios.' });
@@ -70,7 +66,7 @@ export function createCaseRouter({ db, jwtSecret }) {
   router.get('/casos/:id', requireUser, asyncRoute(async (req, res) => {
     const { rows } = await db.query(`
       SELECT * FROM casos
-      WHERE id = $2 AND${PUBLIC_CASE_FILTER} AND estado <> 'RECHAZADO'
+      WHERE id = $2 AND ${PUBLIC_CASE_FILTER} AND estado <> 'RECHAZADO'
     `, [...caseVisibilityParameters(), req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Caso no disponible' });
     res.json({ caso: toPublicCase(rows[0]) });
@@ -120,4 +116,92 @@ export function createCaseRouter({ db, jwtSecret }) {
           senas_particulares, fecha_hora_desaparicion, foto, latitud, longitud, direccion,
           numero_denuncia, estado, reportado_por_usr_id, proximo_seguimiento,
           reportante_mayor_edad, autorizacion_parental, aviso_privacidad_aceptado
-        ) VALUES ($1, $2, $3, $4, $5
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+        RETURNING *
+      `, [
+        id, body.nombreCompleto.trim(), Number(body.edad), body.sexo.trim(), body.ciudad.trim(),
+        body.departamento.trim(), barrio, body.descripcionFisica.trim(), body.vestimenta.trim(), body.senasParticulares || '',
+        body.fechaHoraDesaparicion, body.foto || '', Number(body.ubicacion.lat), Number(body.ubicacion.lng),
+        body.ubicacion.direccion || body.ciudad, denuncia, 'PENDIENTE',
+        req.auth.id, new Date(Date.now() + 48 * 60 * 60 * 1000),
+        body.declaraMayorEdad, body.autorizacionParental === true, body.avisoPrivacidadAceptado
+      ]);
+      await client.query(
+        'INSERT INTO suscripciones_caso (caso_id, usuario_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [id, req.auth.id]
+      );
+      await client.query(
+        'INSERT INTO cambios_estado_caso (caso_id, estado_nuevo, cambiado_por) VALUES ($1, $2, $3)',
+        [id, rows[0].estado, req.auth.id]
+      );
+      await client.query(`
+        INSERT INTO notificaciones (usuario_id, caso_id, titulo, mensaje, tipo)
+        SELECT id, $1, 'Nuevo reporte para validar', $2, 'CASO_PENDIENTE'
+        FROM usuarios WHERE rol = 'administrador'
+      `, [id, `Se recibió un reporte de ${body.nombreCompleto.trim()} y espera validación.`]);
+      return rows[0];
+    });
+    res.status(201).json({ caso: toPublicCase(created) });
+  }));
+
+  router.post('/casos/:id/seguimiento', ...requireCitizen, asyncRoute(async (req, res) => {
+    const action = req.body?.accion;
+    const reason = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+    if (!['SIGUE_ACTIVA', 'LOCALIZADO', 'PRORROGA', 'CERRAR'].includes(action)) {
+      return res.status(400).json({ error: 'La respuesta de seguimiento no es válida.' });
+    }
+    if (action === 'CERRAR' && !reason) {
+      return res.status(400).json({ error: 'Debe justificar el cierre del caso.' });
+    }
+
+    const updated = await withTransaction(db, async client => {
+      const { rows } = await client.query(`
+        SELECT * FROM casos
+        WHERE id = $1 AND reportado_por_usr_id = $2
+        FOR UPDATE
+      `, [req.params.id, req.auth.id]);
+      const current = rows[0];
+      if (!current || !['VALIDADO', 'EN_SEGUIMIENTO'].includes(current.estado)) return null;
+
+      const state = action === 'LOCALIZADO' ? 'LOCALIZADO'
+        : action === 'CERRAR' ? 'CERRADO' : 'VALIDADO';
+      const { rows: updatedRows } = await client.query(`
+        UPDATE casos SET estado = $2,
+          localizado_en = CASE WHEN $2 = 'LOCALIZADO' THEN CURRENT_TIMESTAMP ELSE NULL END,
+          motivo_cierre = CASE WHEN $2 = 'CERRADO' THEN $3 ELSE motivo_cierre END,
+          seguimiento_etapa = CASE WHEN $2 IN ('LOCALIZADO', 'CERRADO') THEN 2 ELSE 0 END,
+          proximo_seguimiento = CASE
+            WHEN $2 IN ('LOCALIZADO', 'CERRADO') THEN NULL
+            WHEN $4 = 'PRORROGA' THEN CURRENT_TIMESTAMP + INTERVAL '24 hours'
+            ELSE CURRENT_TIMESTAMP + INTERVAL '48 hours'
+          END
+        WHERE id = $1 RETURNING *
+      `, [req.params.id, state, reason || null, action]);
+
+      if (current.estado !== state) {
+        await client.query(`
+          INSERT INTO cambios_estado_caso (caso_id, estado_anterior, estado_nuevo, cambiado_por)
+          VALUES ($1, $2, $3, $4)
+        `, [req.params.id, current.estado, state, req.auth.id]);
+      }
+      if (state === 'LOCALIZADO') {
+        await client.query(`
+          INSERT INTO notificaciones (usuario_id, caso_id, titulo, mensaje, tipo)
+          SELECT usuario_id, $1, 'Caso resuelto', $2, 'CASO_LOCALIZADO'
+          FROM suscripciones_caso WHERE caso_id = $1
+        `, [req.params.id, `El familiar informó que ${current.nombre_completo} fue localizado.`]);
+      }
+      return updatedRows[0];
+    });
+    if (!updated) return res.status(404).json({ error: 'Caso no disponible para seguimiento.' });
+    res.json({ caso: toPublicCase(updated) });
+  }));
+
+  const shared = { db, requireUser, requireAdmin, requireCitizen };
+  router.use(createClueRouter(shared));
+  router.use(createNotificationRouter(shared));
+  router.use(createStatsRouter(shared));
+  router.use(createAdminRouter(shared));
+
+  return router;
+}
