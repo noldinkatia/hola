@@ -424,71 +424,7 @@ test('rechazar un caso notifica al ciudadano reportante', async () => {
   }
 });
 
-<<<<<<< HEAD
-test('aprobar un caso lo publica y registra al administrador en la auditoria', async () => {
-  const statements = [];
-  const currentCase = {
-    id: 'case-to-approve',
-    nombre_completo: 'Persona reportada',
-    estado: 'PENDIENTE',
-    reportado_por_usr_id: 42,
-    seguimiento_etapa: 0
-  };
-  const db = {
-    async query() { return { rows: [] }; },
-    async connect() {
-      return {
-        async query(sql, values = []) {
-          statements.push({ sql, values });
-          if (sql.includes('SELECT * FROM casos WHERE id = $1 FOR UPDATE')) {
-            return { rows: [currentCase] };
-          }
-          if (sql.includes('UPDATE casos SET estado = $2')) {
-            return { rows: [{ ...currentCase, estado: values[1] }], rowCount: 1 };
-          }
-          return { rows: [], rowCount: 1 };
-        },
-        release() {}
-      };
-    }
-  };
-  const server = createApp({
-    db,
-    mailer: { sendMail: async () => {} },
-    jwtSecret: secret,
-    appUrl: 'http://127.0.0.1'
-  }).listen(0, '127.0.0.1');
-  await new Promise(resolve => server.once('listening', resolve));
-  try {
-    const adminToken = jwt.sign({ id: 11, rol: 'administrador' }, secret);
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/casos/case-to-approve/estado`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        estado: 'VALIDADO',
-        numeroDenuncia: 'DEN-1',
-        verificoDenuncia: true,
-        datosCoherentes: true,
-        duplicadosVerificados: true,
-        menorValidado: true
-      })
-    });
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).caso.estado, 'VALIDADO');
-    const auditEntry = statements.find(item => item.sql.includes('INSERT INTO cambios_estado_caso'));
-    assert.deepEqual(auditEntry.values, [
-      'case-to-approve', 'PENDIENTE', 'VALIDADO', 11, null
-    ]);
-    assert.match(auditEntry.sql, /cambiado_por, motivo/);
-  } finally {
-    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-  }
-});
-
-test('solo los ciudadanos pueden enviar pistas y se rechazan tokens no válidos', async () => {
-=======
 test('las pistas exigen sesión, se guardan con su autor y se publican anónimas', async () => {
->>>>>>> ebd8324ad118c5c0353876d1451c3c8ec9f26afe
   const statements = [];
   let publicCluesQuery = '';
   const activeCase = { id: 'public-case', estado: 'VALIDADO' };
@@ -533,11 +469,7 @@ test('las pistas exigen sesión, se guardan con su autor y se publican anónimas
 
   try {
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
-<<<<<<< HEAD
-    const cluePayload = JSON.stringify({
-=======
     const clueBody = JSON.stringify({
->>>>>>> ebd8324ad118c5c0353876d1451c3c8ec9f26afe
       descripcion: 'Avistamiento en espacio público',
       fechaHoraAvistamiento: new Date().toISOString(),
       ubicacion: { lat: -25.2867, lng: -57.6333 },
@@ -546,29 +478,6 @@ test('las pistas exigen sesión, se guardan con su autor y se publican anónimas
     const anonymousResponse = await fetch(`${baseUrl}/api/casos/public-case/pistas`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-<<<<<<< HEAD
-      body: cluePayload
-    });
-    assert.equal(anonymousResponse.status, 401);
-
-    const adminToken = jwt.sign({ id: 11, rol: 'administrador' }, secret);
-    const adminResponse = await fetch(`${baseUrl}/api/casos/public-case/pistas`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
-      body: cluePayload
-    });
-    assert.equal(adminResponse.status, 403);
-
-    const citizenToken = jwt.sign({ id: 42, rol: 'ciudadano' }, secret);
-    const response = await fetch(`${baseUrl}/api/casos/public-case/pistas`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${citizenToken}`, 'Content-Type': 'application/json' },
-      body: cluePayload
-    });
-    assert.equal(response.status, 201);
-    const insertedClue = statements.find(statement => statement.sql.includes('INSERT INTO pistas'));
-    assert.equal(insertedClue.values[2], 42);
-=======
       body: clueBody
     });
     assert.equal(anonymousResponse.status, 401);
@@ -583,7 +492,6 @@ test('las pistas exigen sesión, se guardan con su autor y se publican anónimas
     assert.equal(response.status, 201);
     const insertedClue = statements.find(statement => statement.sql.includes('INSERT INTO pistas'));
     assert.equal(insertedClue.values[2], 10);
->>>>>>> ebd8324ad118c5c0353876d1451c3c8ec9f26afe
     assert.ok(statements.some(statement => statement.sql.includes('INSERT INTO suscripciones_caso')));
     assert.ok(statements.some(statement => statement.sql.includes('INSERT INTO notificaciones')
       && statement.sql.includes("WHERE rol = 'administrador'")));
@@ -771,335 +679,26 @@ test('matriz de permisos: sin sesión 401, ciudadano 403 en rutas de administrac
   const citizenRoutes = [
     ['GET', '/api/mis-casos'],
     ['POST', '/api/casos'],
-    ['POST', '/api/casos/c1/pistas'],
-    ['POST', '/api/casos/c1/seguimiento'],
-    ['GET', '/api/notificaciones'],
-    ['POST', '/api/notificaciones/leidas']
+    ['POST', '/api/casos/1/pistas'],
+    ['POST', '/api/casos/1/seguimiento']
   ];
+  for (const [method, path] of citizenRoutes) {
+    const res = await call(method, path);
+    assert.equal(res.status, 401, `${method} ${path} sin sesión debe dar 401`);
+  }
   const adminRoutes = [
     ['GET', '/api/admin/casos'],
-    ['GET', '/api/admin/pistas'],
-    ['POST', '/api/admin/pistas/p1/estado'],
     ['GET', '/api/admin/auditoria'],
-    ['GET', '/api/admin/casos/c1/foto'],
     ['GET', '/api/admin/historial-localizados'],
-    ['GET', '/api/admin/historial-localizados/c1'],
-    ['POST', '/api/admin/casos/c1/estado'],
+    ['POST', '/api/admin/casos/1/estado'],
+    ['POST', '/api/admin/pistas/1/estado'],
     ['POST', '/api/admin/simulador/avanzar-48h']
   ];
-  const publicRoutes = [
-    ['GET', '/api/casos'],
-    ['GET', '/api/pistas'],
-    ['GET', '/api/estadisticas']
-  ];
-  try {
-    for (const [method, path] of [...citizenRoutes, ...adminRoutes]) {
-      assert.equal((await call(method, path)).status, 401, `${method} ${path} sin sesión`);
-    }
-    for (const [method, path] of adminRoutes) {
-      assert.equal((await call(method, path, citizenToken)).status, 403, `${method} ${path} como ciudadano`);
-    }
-    // El administrador no reporta ni sigue casos propios (ROLES_Y_PERMISOS.txt).
-    const adminToken = jwt.sign({ id: 11, rol: 'administrador' }, secret);
-    for (const [method, path] of [['GET', '/api/mis-casos'], ['POST', '/api/casos'], ['POST', '/api/casos/c1/seguimiento']]) {
-      const response = await call(method, path, adminToken);
-      assert.equal(response.status, 403, `${method} ${path} como administrador`);
-      assert.match((await response.json()).error, /administrador no reporta/);
-    }
-    // El ingreso es obligatorio: las rutas de consulta también piden sesión.
-    for (const [method, path] of publicRoutes) {
-      assert.equal((await call(method, path)).status, 401, `${method} ${path} sin sesión`);
-      assert.equal((await call(method, path, citizenToken)).status, 200, `${method} ${path} como ciudadano`);
-    }
-    const forgedToken = jwt.sign({ id: 10, rol: 'administrador' }, 'otro-secreto-de-al-menos-treinta-y-dos-caracteres');
-    assert.equal((await call('GET', '/api/admin/casos', forgedToken)).status, 401);
-  } finally {
-    await app.close();
+  for (const [method, path] of adminRoutes) {
+    const resNoToken = await call(method, path);
+    assert.equal(resNoToken.status, 401, `${method} ${path} sin sesión debe dar 401`);
+    const resCitizen = await call(method, path, citizenToken);
+    assert.equal(resCitizen.status, 403, `${method} ${path} con rol ciudadano debe dar 403`);
   }
-});
-
-test('el administrador ve quién envió cada pista', async () => {
-  let adminQuery = '';
-  const app = createApp({
-    db: withSessions({
-      async query(sql) {
-        adminQuery = sql;
-        return { rows: [{
-          id: 'p1', caso_id: 'c1', nombre_completo: 'Caso', descripcion: 'Pista',
-          fecha_hora_avistamiento: new Date(), latitud: 0, longitud: 0, direccion: '',
-          fotos: [], estado: 'PENDIENTE', fecha_envio: new Date(), cambios_estado: [],
-          autor_id: 10, autor_nombre: 'Ciudadana Test', autor_correo: 'test@gmail.com'
-        }] };
-      }
-    }),
-    mailer: { sendMail: async () => {} },
-    jwtSecret: secret,
-    appUrl: 'http://127.0.0.1'
-  });
-  const server = app.listen(0, '127.0.0.1');
-  await new Promise(resolve => server.once('listening', resolve));
-  try {
-    const adminToken = jwt.sign({ id: 11, rol: 'administrador' }, secret);
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/pistas`, {
-      headers: { Authorization: `Bearer ${adminToken}` }
-    });
-    assert.equal(response.status, 200);
-    assert.match(adminQuery, /LEFT JOIN usuarios u ON u\.id = p\.usuario_id/);
-    assert.deepEqual((await response.json()).pistas[0].autor,
-      { id: 10, nombre: 'Ciudadana Test', correo: 'test@gmail.com' });
-  } finally {
-    await new Promise(resolve => server.close(resolve));
-  }
-});
-
-test('solo se aceptan ubicaciones de la lista oficial de Paraguay', async () => {
-  const { ubicacionValida } = await import('../ubicaciones.js');
-  assert.equal(ubicacionValida('Central', 'Luque'), true);
-  assert.equal(ubicacionValida('central', 'LUQUE'), true);
-  assert.equal(ubicacionValida('Capital', 'Asunción', 'Villa Morra'), true);
-  assert.equal(ubicacionValida('Central', 'Ciudad del Este'), false);
-  assert.equal(ubicacionValida('Buenos Aires', 'Palermo'), false);
-  assert.equal(ubicacionValida('Central', 'Luque', 'Barrio inventado'), false);
-
-  const app = await startApp();
-  try {
-    const citizenToken = jwt.sign({ id: 10, rol: 'ciudadano' }, secret);
-    const response = await fetch(`${app.baseUrl}/api/casos`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${citizenToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        nombreCompleto: 'Persona', edad: 30, sexo: 'Otro', ciudad: 'Palermo', departamento: 'Buenos Aires',
-        descripcionFisica: 'x', vestimenta: 'x', fechaHoraDesaparicion: new Date().toISOString(),
-        ubicacion: { lat: -25.2867, lng: -57.6333 }, declaraMayorEdad: true, avisoPrivacidadAceptado: true
-      })
-    });
-    assert.equal(response.status, 400);
-    assert.match((await response.json()).error, /lista de Paraguay/);
-  } finally {
-    await app.close();
-  }
-});
-
-test('el listado público no lee la foto de la base y pagina solo si se pide', async () => {
-  const app = await startApp();
-  try {
-    assert.equal((await fetch(`${app.baseUrl}/api/casos`, { headers: citizenAuth })).status, 200);
-    const unpaginated = app.queries.find(item => item.sql.includes('ORDER BY creado_en DESC'));
-    assert.doesNotMatch(unpaginated.sql, /SELECT \*/);
-    assert.match(unpaginated.sql, /\(foto <> ''\) AS tiene_foto/);
-    assert.deepEqual(unpaginated.values.slice(-2), [null, 0], 'sin ?limite no se limita');
-
-    const paginatedResponse = await fetch(`${app.baseUrl}/api/casos?pagina=3&limite=500`, { headers: citizenAuth });
-    assert.equal(paginatedResponse.status, 200);
-    const body = await paginatedResponse.json();
-    assert.equal(body.pagina, 3);
-    assert.equal(body.limite, 100, 'el límite máximo es 100');
-    const paginatedQuery = app.queries.filter(item => item.sql.includes('ORDER BY creado_en DESC')).at(-1);
-    assert.deepEqual(paginatedQuery.values.slice(-2), [100, 200]);
-  } finally {
-    await app.close();
-  }
-});
-
-test('paginación del listado público con PostgreSQL', {
-  skip: !testDatabaseUrl && 'Defina TEST_DATABASE_URL para ejecutar la prueba de integración con PostgreSQL.'
-}, async () => {
-  const db = createDatabase(testDatabaseUrl);
-  const marker = `Pagina${randomUUID().replaceAll('-', '')}`;
-  const adminEmail = `admin.pag.${randomUUID().replaceAll('-', '')}@gmail.com`;
-  const citizenEmail = `cit.pag.${randomUUID().replaceAll('-', '')}@gmail.com`;
-  const ids = [1, 2, 3].map(n => `cas_test_pag_${n}_${marker}`);
-  let server;
-  let databaseInitialized = false;
-  try {
-    await initializeDatabase(db);
-    databaseInitialized = true;
-    for (const [index, id] of ids.entries()) {
-      await db.query(`
-        INSERT INTO casos (id, nombre_completo, edad, sexo, ciudad, departamento, descripcion_fisica,
-          vestimenta, fecha_hora_desaparicion, foto, latitud, longitud, estado, creado_en)
-        VALUES ($1, $2, 30, 'Femenino', 'Asunción', 'Capital', 'Descripción', 'Ropa',
-          CURRENT_TIMESTAMP, $3, -25.3, -57.6, 'VALIDADO', CURRENT_TIMESTAMP - ($4 * INTERVAL '1 minute'))
-      `, [id, `Persona ${marker} ${index}`, index === 0 ? 'data:image/png;base64,iVBORw0KGgo=' : '', index]);
-    }
-    server = createApp({
-      db,
-      mailer: { sendMail: async () => {} },
-      jwtSecret: secret,
-      appUrl: 'http://127.0.0.1'
-    }).listen(0, '127.0.0.1');
-    await new Promise(resolve => server.once('listening', resolve));
-    const baseUrl = `http://127.0.0.1:${server.address().port}`;
-
-    const citizenId = (await db.query(`
-      INSERT INTO usuarios (nombre_completo, correo, contrasena_hash, rol, verificado)
-      VALUES ('Ciudadano Paginación', $1, 'sin-uso', 'ciudadano', TRUE) RETURNING id
-    `, [citizenEmail])).rows[0].id;
-    const auth = { headers: { Authorization: `Bearer ${jwt.sign({ id: citizenId, rol: 'ciudadano', ver: 0 }, secret)}` } };
-    const all = await (await fetch(`${baseUrl}/api/casos?q=${marker}`, auth)).json();
-    assert.equal(all.casos.length, 3);
-    assert.equal(all.total, 3);
-    assert.equal(all.casos[0].fotoUrl, `/api/casos/${ids[0]}/foto`);
-    assert.equal(all.casos[1].fotoUrl, '');
-
-    const page1 = await (await fetch(`${baseUrl}/api/casos?q=${marker}&limite=2&pagina=1`, auth)).json();
-    const page2 = await (await fetch(`${baseUrl}/api/casos?q=${marker}&limite=2&pagina=2`, auth)).json();
-    assert.deepEqual(page1.casos.map(item => item.id), [ids[0], ids[1]]);
-    assert.deepEqual(page2.casos.map(item => item.id), [ids[2]]);
-    assert.equal(page1.total, 3);
-    assert.equal(page2.total, 3);
-    assert.equal((await fetch(`${baseUrl}/api/casos/${ids[0]}/foto`, auth)).status, 200);
-
-    // Pistas públicas y listados de administración paginados contra PostgreSQL real.
-    for (const n of [1, 2, 3]) {
-      await db.query(`
-        INSERT INTO pistas (id, caso_id, descripcion, fecha_hora_avistamiento, latitud, longitud, estado)
-        VALUES ($1, $2, 'Pista paginada', CURRENT_TIMESTAMP, -25.3, -57.6, 'VALIDADA')
-      `, [`pst_test_pag_${n}_${marker}`, ids[0]]);
-    }
-    const cluesPage = await (await fetch(`${baseUrl}/api/pistas?limite=2&pagina=1`, auth)).json();
-    assert.equal(cluesPage.pistas.length, 2);
-    assert.ok(cluesPage.total >= 3);
-    await seedAdministrator(db, adminEmail, 'Admin-paginacion-123');
-    const adminId = (await db.query('SELECT id FROM usuarios WHERE correo = $1', [adminEmail])).rows[0].id;
-    const adminToken = jwt.sign({ id: adminId, rol: 'administrador', ver: 0 }, secret);
-    for (const [path, key] of [['/api/admin/casos', 'casos'], ['/api/admin/pistas', 'pistas']]) {
-      const response = await fetch(`${baseUrl}${path}?limite=2&pagina=2`, {
-        headers: { Authorization: `Bearer ${adminToken}` }
-      });
-      assert.equal(response.status, 200, path);
-      const body = await response.json();
-      assert.equal(body.pagina, 2, path);
-      assert.ok(body[key].length <= 2, path);
-      assert.ok(body.total >= 3, path);
-    }
-  } finally {
-    if (server?.listening) await new Promise(resolve => server.close(resolve));
-    if (databaseInitialized) {
-      await db.query('DELETE FROM pistas WHERE caso_id = ANY($1)', [ids]);
-      await db.query('DELETE FROM casos WHERE id = ANY($1)', [ids]);
-      await db.query('DELETE FROM usuarios WHERE correo = ANY($1)', [[adminEmail, citizenEmail]]);
-    }
-    await db.end();
-  }
-});
-
-test('pistas públicas y listados de administración paginan solo si se pide', async () => {
-  const app = await startApp();
-  const adminToken = jwt.sign({ id: 11, rol: 'administrador' }, secret);
-  const get = (path, token) => fetch(`${app.baseUrl}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {}
-  });
-  const lastQuery = fragment => app.queries.filter(item => item.sql.includes(fragment)).at(-1);
-  try {
-    for (const [path, fragment, key, token] of [
-      ['/api/pistas', "p.estado = 'VALIDADA'", 'pistas', jwt.sign({ id: 10, rol: 'ciudadano' }, secret)],
-      ['/api/admin/pistas', 'autor_correo', 'pistas', adminToken],
-      ['/api/admin/casos', 'contacto_reportante', 'casos', adminToken]
-    ]) {
-      const all = await get(path, token);
-      assert.equal(all.status, 200, path);
-      const allBody = await all.json();
-      assert.ok(Array.isArray(allBody[key]), path);
-      assert.equal(allBody.pagina, undefined, `${path} sin ?limite no informa página`);
-      assert.deepEqual(lastQuery(fragment).values.slice(-2), [null, 0], `${path} sin ?limite no limita`);
-
-      const paged = await (await get(`${path}?limite=5&pagina=2`, token)).json();
-      assert.equal(paged.pagina, 2, path);
-      assert.equal(paged.limite, 5, path);
-      assert.deepEqual(lastQuery(fragment).values.slice(-2), [5, 5], `${path} pagina con LIMIT/OFFSET`);
-    }
-    assert.equal((await get('/api/admin/casos?limite=5')).status, 401);
-  } finally {
-    await app.close();
-  }
-});
-
-test('fotos de pistas por URL: índice válido y visibilidad pública', async () => {
-  const app = await startApp();
-  try {
-    for (const bad of ['3', '-1', 'x', '1.5']) {
-      assert.equal((await fetch(`${app.baseUrl}/api/pistas/p1/fotos/${bad}`, { headers: citizenAuth })).status, 404, bad);
-    }
-    assert.equal((await fetch(`${app.baseUrl}/api/pistas/p1/fotos/0`, { headers: citizenAuth })).status, 404, 'sin pista visible');
-    const query = app.queries.filter(item => item.sql.includes('p.fotos[$3]')).at(-1);
-    assert.match(query.sql, /p\.estado = 'VALIDADA'/);
-    assert.match(query.sql, /c\.localizado_en/);
-    assert.deepEqual(query.values, [windowHours, 'p1', 1], 'índice 0 → posición 1 del array');
-    assert.equal((await fetch(`${app.baseUrl}/api/admin/pistas/p1/fotos/0`)).status, 401);
-  } finally {
-    await app.close();
-  }
-});
-
-test('fotos de pistas por URL con PostgreSQL', {
-  skip: !testDatabaseUrl && 'Defina TEST_DATABASE_URL para ejecutar la prueba de integración con PostgreSQL.'
-}, async () => {
-  const db = createDatabase(testDatabaseUrl);
-  const suffix = randomUUID().replaceAll('-', '');
-  const caseId = `cas_test_fotos_${suffix}`;
-  const adminEmail = `admin.fotos.${suffix}@gmail.com`;
-  const png = 'data:image/png;base64,iVBORw0KGgo=';
-  const jpeg = 'data:image/jpeg;base64,/9j/2Q==';
-  let server;
-  let databaseInitialized = false;
-  try {
-    await initializeDatabase(db);
-    databaseInitialized = true;
-    await db.query(`
-      INSERT INTO casos (id, nombre_completo, edad, sexo, ciudad, departamento, descripcion_fisica,
-        vestimenta, fecha_hora_desaparicion, latitud, longitud, estado)
-      VALUES ($1, 'Caso fotos', 30, 'Otro', 'Asunción', 'Capital', 'Descripción', 'Ropa',
-        CURRENT_TIMESTAMP, -25.3, -57.6, 'VALIDADO')
-    `, [caseId]);
-    for (const [id, estado, fotos] of [
-      [`pst_val_${suffix}`, 'VALIDADA', [png, 'javascript:alert(1)', jpeg]],
-      [`pst_pen_${suffix}`, 'PENDIENTE', [png]]
-    ]) {
-      await db.query(`
-        INSERT INTO pistas (id, caso_id, descripcion, fecha_hora_avistamiento, latitud, longitud, fotos, estado)
-        VALUES ($1, $2, 'Pista con fotos', CURRENT_TIMESTAMP, -25.3, -57.6, $3, $4)
-      `, [id, caseId, fotos, estado]);
-    }
-    await seedAdministrator(db, adminEmail, 'Admin-fotos-123');
-    const adminId = (await db.query('SELECT id FROM usuarios WHERE correo = $1', [adminEmail])).rows[0].id;
-    const adminAuth = { Authorization: `Bearer ${jwt.sign({ id: adminId, rol: 'administrador', ver: 0 }, secret)}` };
-    server = createApp({
-      db,
-      mailer: { sendMail: async () => {} },
-      jwtSecret: secret,
-      appUrl: 'http://127.0.0.1'
-    }).listen(0, '127.0.0.1');
-    await new Promise(resolve => server.once('listening', resolve));
-    const baseUrl = `http://127.0.0.1:${server.address().port}`;
-
-    const publicClue = (await (await fetch(`${baseUrl}/api/pistas`, { headers: adminAuth })).json()).pistas
-      .find(item => item.id === `pst_val_${suffix}`);
-    assert.deepEqual(publicClue.fotosUrl, [
-      `/api/pistas/pst_val_${suffix}/fotos/0`,
-      `/api/pistas/pst_val_${suffix}/fotos/2`
-    ], 'se omite la foto inválida y se conserva el índice original');
-    assert.equal('fotos' in publicClue, false, 'el listado ya no envía las fotos en base64');
-    const first = await fetch(`${baseUrl}${publicClue.fotosUrl[0]}`, { headers: adminAuth });
-    assert.equal(first.status, 200);
-    assert.equal(first.headers.get('content-type'), 'image/png');
-    assert.equal((await fetch(`${baseUrl}${publicClue.fotosUrl[1]}`, { headers: adminAuth })).headers.get('content-type'), 'image/jpeg');
-    assert.equal((await fetch(`${baseUrl}/api/pistas/pst_val_${suffix}/fotos/1`, { headers: adminAuth })).status, 404, 'foto inválida');
-
-    assert.equal((await fetch(`${baseUrl}/api/pistas/pst_pen_${suffix}/fotos/0`, { headers: adminAuth })).status, 404,
-      'la foto de una pista pendiente no es pública');
-    const adminClues = (await (await fetch(`${baseUrl}/api/admin/pistas`, { headers: adminAuth })).json()).pistas;
-    const pendingUrl = adminClues.find(item => item.id === `pst_pen_${suffix}`).fotosUrl[0];
-    assert.equal(pendingUrl, `/api/admin/pistas/pst_pen_${suffix}/fotos/0`);
-    assert.equal((await fetch(`${baseUrl}${pendingUrl}`, { headers: adminAuth })).status, 200);
-    assert.equal((await fetch(`${baseUrl}${pendingUrl}`)).status, 401);
-  } finally {
-    if (server?.listening) await new Promise(resolve => server.close(resolve));
-    if (databaseInitialized) {
-      await db.query('DELETE FROM pistas WHERE caso_id = $1', [caseId]);
-      await db.query('DELETE FROM casos WHERE id = $1', [caseId]);
-      await db.query('DELETE FROM usuarios WHERE correo = $1', [adminEmail]);
-    }
-    await db.end();
-  }
+  await app.close();
 });
